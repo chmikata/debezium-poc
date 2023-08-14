@@ -1,0 +1,6 @@
+go 1.20
+
+use (
+	./sample-src/consumer
+	./sample-src/producer
+)
