@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"os"
 	"os/signal"
+	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 
 	echo "github.com/labstack/echo/v4"
 	midleware "github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/gommon/log"
 )
 
 type CustomContext struct {
@@ -51,6 +54,10 @@ func main() {
 	e.Use(midleware.Recover())
 	e.Use(customContextMiddleware(db))
 
+	if l, ok := e.Logger.(*log.Logger); ok {
+		l.SetLevel(log.INFO)
+	}
+
 	e.GET("/produce", produceMessage)
 
 	errC := make(chan error)
@@ -67,7 +74,7 @@ func main() {
 		e.Logger.Fatal(err)
 		panic(err)
 	case <-quitC:
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		e.Logger.Info("Shutting down server...")
 		if err := e.Shutdown(shutdownCtx); err != nil {
@@ -82,14 +89,33 @@ func produceMessage(e echo.Context) error {
 		return echo.NewHTTPError(500, "failed to cast context")
 	}
 
-	regist := &models.Regist{
-		Name: "test",
+	var wg sync.WaitGroup
+
+	for i := 0; i < 1; i++ {
+		wg.Add(1)
+		i := i
+		go func() {
+			defer wg.Done()
+			regist := &models.Regist{
+				Name: "test:" + strconv.Itoa(i),
+			}
+			err := regist.Insert(context.Background(), cc.db, boil.Infer())
+			if err != nil {
+				cc.Logger().Errorf("failed to insert regist: %v", err)
+			}
+			account := &models.Account{
+				ID:   regist.ID,
+				Name: "test:" + strconv.Itoa(i),
+			}
+			err = account.Insert(context.Background(), cc.db, boil.Infer())
+			if err != nil {
+				cc.Logger().Errorf("failed to insert account: %v", err)
+			}
+			cc.Logger().Infof("regist ID: %v", account.ID)
+		}()
 	}
 
-	err := regist.Insert(context.Background(), cc.db, boil.Infer())
-	if err != nil {
-		return echo.NewHTTPError(500, err)
-	}
+	wg.Wait()
 
 	return nil
 }
